@@ -11,7 +11,7 @@ use futures_util::future::poll_fn;
 
 use serde::Serialize;
 use thiserror::Error;
-use tokio::io::{self, AsyncReadExt, AsyncWriteExt, BufWriter};
+use tokio::io::{self, AsyncReadExt, AsyncWriteExt, BufWriter, ReadHalf, WriteHalf};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 
 #[derive(Debug)]
@@ -140,16 +140,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     println!("{handler:?}"); */
+    //let result: Result<String, ClientError> = server.call("system.listMethods", ()).await;
 
     let mut server = ServerClient::new("127.0.0.1:5000").await;
 
     let result: Result<bool, ClientError> = server.call("SetApiVersion", "2023-03-24").await;
 
-    //let result: Result<String, ClientError> = server.call("system.listMethods", ()).await;
-
     let working: Result<bool, ClientError> = server
         .call("Authenticate", ("SuperAdmin", "SuperAdmin"))
         .await;
+
+    //let jaa: Result<bool, ClientError> = server.call("ChatSend", "Hey from Rust owo").await;
+
+    let result: Result<bool, ClientError> = server.call("EnableCallbacks", true).await;
+
+    println!("{result:?}");
 
     //let working: Result<bool, ClientError> = server.call("EnableCallbacks", true).await;
 
@@ -242,20 +247,23 @@ struct ServerPool {
 
 struct ServerClient {
     // url: String,
-    stream: BufWriter<TcpStream>,
+    reader: ReadHalf<BufWriter<TcpStream>>,
+    writer: WriteHalf<BufWriter<TcpStream>>,
     buffer: BytesMut,
     handler: u32,
 }
 
 impl ServerClient {
     pub async fn new(url: impl Into<String>) -> Self {
-        let mut stream = BufWriter::new(TcpStream::connect(url.into()).await.unwrap());
+        let stream = BufWriter::new(TcpStream::connect(url.into()).await.unwrap());
+
+        let (mut reader, writer) = io::split(stream);
 
         //l//et ret = stream.write(&[]).await;
         //_ = stream.flush().await;
         let mut buf = vec![0; 15];
 
-        let read = stream.read(&mut buf).await;
+        let read = reader.read(&mut buf).await;
         println!("ff{read:?}");
 
         //let handler: Handler = msg[0..4];
@@ -270,8 +278,11 @@ impl ServerClient {
             call,
         }; */
 
+        //tokio::spawn(async move { reader });
+
         Self {
-            stream,
+            reader,
+            writer,
             handler: 0x80000000,
             buffer: BytesMut::with_capacity(1024),
         }
@@ -339,6 +350,8 @@ impl ServerClient {
         // deserialize XML-RPC method response
         let result = response_to_result(read.unwrap().unwrap().xml())?;
 
+        println!("{result:?}");
+
         Ok(result.inner())
     }
 
@@ -368,7 +381,7 @@ impl ServerClient {
                     panic!()
                 }
             } */
-            if 0 == self.stream.read_buf(&mut self.buffer).await? {
+            if 0 == self.reader.read_buf(&mut self.buffer).await? {
                 // The remote closed the connection. For this to be a clean
                 // shutdown, there should be no data in the read buffer. If
                 // there is, this means that the peer closed the socket while
@@ -424,19 +437,18 @@ impl ServerClient {
                 handler,
                 body,
             } => {
-                self.stream.write_u32_le(*size).await?;
-                self.stream.write_u32_le(*handler).await?;
-                self.stream.write_all(body.as_bytes()).await?;
+                self.writer.write_u32_le(*size).await?;
+                self.writer.write_u32_le(*handler).await?;
+                self.writer.write_all(body.as_bytes()).await?;
 
-                println!("writer: {:?}", self.stream.buffer())
+                //println!("writer bytes: {:?}", self.writer.buffer())
             }
             GbxFrame::Body(bytes_mut) => todo!(),
             GbxFrame::Header { size, handler } => todo!(),
         }
 
-        let flushed = self.stream.flush().await;
-        println!("Flushed {flushed:?} Written: {:?}", self.stream.buffer());
-
+        let flushed = self.writer.flush().await;
+        println!("Flushed {flushed:?}");
         Ok(())
     }
 }
@@ -501,3 +513,5 @@ impl ClientError {
         ClientError::RPC { error }
     }
 }
+
+//trait
