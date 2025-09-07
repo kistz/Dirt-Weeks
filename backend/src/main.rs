@@ -13,6 +13,10 @@ use serde::Serialize;
 use thiserror::Error;
 use tokio::io::{self, AsyncReadExt, AsyncWriteExt, BufWriter, ReadHalf, WriteHalf};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
+use tokio::process::Command;
+use tokio::signal;
+use tokio::sync::mpsc::Sender;
+use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug)]
 struct Handler {
@@ -26,11 +30,6 @@ struct GbxHeader {
     handler: u32,
     //bytes: String,
 }
-struct GbxRequest {
-    size: u32,
-    handler: u32,
-    payload: String,
-}
 
 #[derive(Debug)]
 enum GbxFrame {
@@ -43,6 +42,24 @@ enum GbxFrame {
         size: u32,
         handler: u32,
         body: String,
+    },
+}
+
+#[derive(Debug)]
+struct GbxPacket {
+    size: u32,
+    handler: u32,
+    body: String,
+}
+
+#[derive(Debug)]
+enum GbxMessage {
+    MethodCall {
+        message: String,
+        responder: oneshot::Sender<MethodResponse>,
+    },
+    Callback {
+        message: String,
     },
 }
 
@@ -150,15 +167,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .call("Authenticate", ("SuperAdmin", "SuperAdmin"))
         .await;
 
-    //let jaa: Result<bool, ClientError> = server.call("ChatSend", "Hey from Rust owo").await;
-
     let result: Result<bool, ClientError> = server.call("EnableCallbacks", true).await;
 
-    println!("{result:?}");
+    let _: Result<bool, ClientError> = server.call("ChatSend", "Hey from Rust owo").await;
+    //println!("{result:?}");
 
     //let working: Result<bool, ClientError> = server.call("EnableCallbacks", true).await;
 
-    println!("{working:?}");
+    //println!("{working:?}");
     // Spawn a task to poll the connection, driving the HTTP state
     /* tokio::task::spawn(async move {
         if let Err(err) = conn.await {
@@ -184,6 +200,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     //.header(hyper::header::HOST, authority.as_str())
     // .body(Empty::<Bytes>::new())?;
     //.body()?;
+
+    match signal::ctrl_c().await {
+        Ok(()) => {
+            println!("Closing the application");
+        }
+        Err(err) => {
+            eprintln!("Unable to listen for shutdown signal: {}", err);
+            // we also shut down in case of error
+        }
+    }
 
     // Await the response...
     /* let mut res = sender.send_request(req).await?;
@@ -247,8 +273,10 @@ struct ServerPool {
 
 struct ServerClient {
     // url: String,
-    reader: ReadHalf<BufWriter<TcpStream>>,
-    writer: WriteHalf<BufWriter<TcpStream>>,
+    //reader: ReadHalf<BufWriter<TcpStream>>,
+    //writer: WriteHalf<BufWriter<TcpStream>>,
+    sender: Sender<GbxMessage>,
+
     buffer: BytesMut,
     handler: u32,
 }
@@ -257,7 +285,7 @@ impl ServerClient {
     pub async fn new(url: impl Into<String>) -> Self {
         let stream = BufWriter::new(TcpStream::connect(url.into()).await.unwrap());
 
-        let (mut reader, writer) = io::split(stream);
+        let (mut reader, mut writer) = io::split(stream);
 
         //l//et ret = stream.write(&[]).await;
         //_ = stream.flush().await;
@@ -278,11 +306,105 @@ impl ServerClient {
             call,
         }; */
 
-        //tokio::spawn(async move { reader });
+        let (sender, mut rx) = mpsc::channel::<GbxMessage>(32);
+
+        let write_manager = tokio::spawn(async move {
+            // Establish a connection to the server
+
+            // Start receiving messages
+            while let Some(cmd) = rx.recv().await {
+                println!("{cmd:?}");
+
+                match cmd {
+                    GbxMessage::MethodCall { message, responder } => {
+                        //TODO actually make the request
+                        /* let written = self
+                        .write_frame(&GbxFrame::MethodCall {
+                            size: message.len() as u32,
+                            handler: self.handler,
+                            body: message,
+                        })
+                        .await; */
+
+                        /* match frame {
+                        GbxFrame::MethodCall {
+                            size,
+                            handler,
+                            body,
+                        } => { */
+                        writer.write_u32_le(message.len() as u32).await.unwrap();
+                        writer.write_u32_le(0x80000001u32).await.unwrap();
+                        writer.write_all(message.as_bytes()).await.unwrap();
+
+                        //println!("writer bytes: {:?}", self.writer.buffer())
+                        /*   }
+                            GbxFrame::Body(bytes_mut) => todo!(),
+                            GbxFrame::Header { size, handler } => todo!(),
+                        } */
+
+                        let flushed = writer.flush().await;
+
+                        let response = MethodResponse::new(Value::boolean(false));
+                        let _ = responder.send(response);
+                    }
+                    GbxMessage::Callback { message } => todo!(),
+                }
+                /* match cmd {
+                    Get { key } => {
+                        client.get(&key).await;
+                    }
+                    Set { key, val } => {
+                        client.set(&key, val).await;
+                    }
+                } */
+            }
+        });
+
+        let read_manager = tokio::spawn(async move {
+            // Establish a connection to the server
+
+            let mut buffer: BytesMut = BytesMut::with_capacity(1024);
+
+            fn parse_frame(buffer: &mut BytesMut) -> Option<GbxFrame> {
+                let mut buf = Cursor::new(&buffer[..]);
+
+                if let Ok(frame) = GbxFrame::parse(&mut buf) {
+                    // Discard the frame from the buffer
+                    //self.buffer.advance(len);
+
+                    // Return the frame to the caller.
+                    Some(frame)
+                } else {
+                    None
+                }
+            }
+
+            loop {
+                if let Some(frame) = parse_frame(&mut buffer) {
+                    println!("{frame:?}");
+                }
+                println!("Buffy: {buffer:?}");
+
+                if 0 == reader.read_buf(&mut buffer).await.unwrap() {
+                    // The remote closed the connection. For this to be a clean
+                    // shutdown, there should be no data in the read buffer. If
+                    // there is, this means that the peer closed the socket while
+                    // sending a frame.
+                    if buffer.is_empty() {
+                        println!("Empty Buffy");
+                        continue;
+                    } else {
+                        panic!("connection reset by peer");
+                    }
+                }
+            }
+        });
 
         Self {
-            reader,
-            writer,
+            //reader,
+            // writer,
+            sender,
+
             handler: 0x80000000,
             buffer: BytesMut::with_capacity(1024),
         }
@@ -330,7 +452,7 @@ impl ServerClient {
 
         self.handler += 1;
 
-        let written = self
+        /* let written = self
             .write_frame(&GbxFrame::MethodCall {
                 size: body.len() as u32,
                 handler: self.handler,
@@ -338,17 +460,36 @@ impl ServerClient {
             })
             .await;
 
-        println!("Written {written:?}");
+        println!("Written {written:?}"); */
 
-        let read = self.read_frame().await; //self.stream.read(&mut buf).await;
-        println!("Read {read:?}");
+        let local_sender = self.sender.clone();
+
+        let response = tokio::spawn(async move {
+            let (resp_tx, resp_rx) = oneshot::channel();
+            local_sender
+                .send(GbxMessage::MethodCall {
+                    message: body,
+                    responder: resp_tx,
+                })
+                .await
+                .unwrap();
+
+            let res = resp_rx.await;
+            println!("GOT = {:?}", res);
+            res
+        })
+        .await;
+
+        //let read = self.read_frame().await; //self.stream.read(&mut buf).await;
+        //println!("Read {read:?}");
         //println!("{buf:?}");
         /* let size = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
         let handler = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
         let call = String::from_utf8(buf[8..((size + 4) as usize)].to_vec()).unwrap(); */
 
         // deserialize XML-RPC method response
-        let result = response_to_result(read.unwrap().unwrap().xml())?;
+        //let result = response_to_result(read.unwrap().unwrap().xml())?;
+        let result = MethodResponse::new(Value::boolean(false));
 
         println!("{result:?}");
 
@@ -381,7 +522,7 @@ impl ServerClient {
                     panic!()
                 }
             } */
-            if 0 == self.reader.read_buf(&mut self.buffer).await? {
+            /* if 0 == self.reader.read_buf(&mut self.buffer).await? {
                 // The remote closed the connection. For this to be a clean
                 // shutdown, there should be no data in the read buffer. If
                 // there is, this means that the peer closed the socket while
@@ -391,7 +532,7 @@ impl ServerClient {
                 } else {
                     return Err(panic!("connection reset by peer"));
                 }
-            }
+            } */
         }
     }
 
@@ -429,8 +570,8 @@ impl ServerClient {
         // }
     }
 
-    /// Write a frame to the connection.
-    pub async fn write_frame(&mut self, frame: &GbxFrame) -> io::Result<()> {
+    // Write a frame to the connection.
+    /* pub async fn write_frame(&mut self, frame: &GbxFrame) -> io::Result<()> {
         match frame {
             GbxFrame::MethodCall {
                 size,
@@ -450,7 +591,7 @@ impl ServerClient {
         let flushed = self.writer.flush().await;
         println!("Flushed {flushed:?}");
         Ok(())
-    }
+    } */
 }
 
 fn response_to_result(contents: &str) -> Result<MethodResponse, ClientError> {
