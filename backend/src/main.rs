@@ -18,38 +18,79 @@ use tokio::signal;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, oneshot};
 
-#[derive(Debug)]
+/* #[derive(Debug)]
 struct Handler {
     size: u32,
     //handler: u32,
     call: String,
-}
+} */
 
-struct GbxHeader {
+/* struct GbxHeader {
     size: u32,
     handler: u32,
     //bytes: String,
-}
+} */
 
-#[derive(Debug)]
+/* #[derive(Debug)]
 enum GbxFrame {
-    Header {
+    /* Header {
         size: u32,
         handler: u32,
     },
-    Body(BytesMut),
+    Body(BytesMut), */
     MethodCall {
         size: u32,
         handler: u32,
         body: String,
     },
-}
+    Callback {},
+} */
 
 #[derive(Debug)]
 struct GbxPacket {
     size: u32,
     handler: u32,
     body: String,
+}
+
+impl GbxPacket {
+    fn parse(buf: &mut Cursor<&[u8]>) -> Result<GbxPacket, ClientError> {
+        if buf.remaining() < 8 {
+            return Err(ClientError::Incomplete);
+        }
+        let size = buf.get_u32_le();
+        let handler = buf.get_u32_le();
+        if buf.remaining() < size as usize {
+            return Err(ClientError::Incomplete);
+        }
+
+        let body = String::from_utf8_lossy(&buf.chunk()[..(size as usize)]).into_owned();
+
+        // Method calls and Callbacks operate above and below half a u32 respectively.
+        /* if handler > 0x80000000u32 {
+            Ok(GbxFrame::MethodCall {
+                size,
+                handler,
+                body,
+            })
+        } else {
+            Ok(GbxFrame::MethodCall {
+                size,
+                handler,
+                body,
+            })
+        } */
+
+        Ok(GbxPacket {
+            size,
+            handler,
+            body,
+        })
+    }
+
+    fn is_method_response(&self) -> bool {
+        self.handler > 0x80000000u32
+    }
 }
 
 #[derive(Debug)]
@@ -62,8 +103,8 @@ enum GbxMessage {
         message: String,
     },
 }
-
-impl GbxFrame {
+/*
+/* impl GbxFrame {
     fn xml(&self) -> &str {
         match self {
             GbxFrame::Header { size, handler } => todo!(),
@@ -74,9 +115,9 @@ impl GbxFrame {
                 body,
             } => body,
         }
-    }
+    } */
 
-    fn parse(buf: &mut Cursor<&[u8]>) -> Result<GbxFrame, ClientError> {
+    fn parse(buf: &mut Cursor<&[u8]>) -> Result<GbxPacket, ClientError> {
         if buf.remaining() < 8 {
             return Err(ClientError::Incomplete);
         }
@@ -88,13 +129,28 @@ impl GbxFrame {
 
         let body = String::from_utf8_lossy(&buf.chunk()[..(size as usize)]).into_owned();
 
-        Ok(GbxFrame::MethodCall {
+        // Method calls and Callbacks operate above and below half a u32 respectively.
+        /* if handler > 0x80000000u32 {
+            Ok(GbxFrame::MethodCall {
+                size,
+                handler,
+                body,
+            })
+        } else {
+            Ok(GbxFrame::MethodCall {
+                size,
+                handler,
+                body,
+            })
+        } */
+
+        Ok(GbxPacket {
             size,
             handler,
             body,
         })
     }
-}
+} */
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -169,8 +225,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let result: Result<bool, ClientError> = server.call("EnableCallbacks", true).await;
 
-    let _: Result<bool, ClientError> = server.call("ChatSend", "Hey from Rust owo").await;
+    let _: Result<bool, ClientError> = server
+        .call("ChatSendServerMessage", "Hey from Rust owo")
+        .await;
     //println!("{result:?}");
+
+    server.subscribe("ManiaPlanet.PlayerInfoChanged", |ctx| {
+        println!("WOW: {ctx:?}")
+    });
 
     //let working: Result<bool, ClientError> = server.call("EnableCallbacks", true).await;
 
@@ -203,7 +265,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     match signal::ctrl_c().await {
         Ok(()) => {
-            println!("Closing the application");
+            println!("CTRL + C: Closing the application 👋");
         }
         Err(err) => {
             eprintln!("Unable to listen for shutdown signal: {}", err);
@@ -277,7 +339,7 @@ struct ServerClient {
     //writer: WriteHalf<BufWriter<TcpStream>>,
     sender: Sender<GbxMessage>,
 
-    buffer: BytesMut,
+    //buffer: BytesMut,
     handler: u32,
 }
 
@@ -308,7 +370,7 @@ impl ServerClient {
 
         let (sender, mut rx) = mpsc::channel::<GbxMessage>(32);
 
-        let write_manager = tokio::spawn(async move {
+        let _write_manager = tokio::spawn(async move {
             // Establish a connection to the server
 
             // Start receiving messages
@@ -360,20 +422,23 @@ impl ServerClient {
             }
         });
 
-        let read_manager = tokio::spawn(async move {
+        let _read_manager = tokio::spawn(async move {
             // Establish a connection to the server
 
             let mut buffer: BytesMut = BytesMut::with_capacity(1024);
 
-            fn parse_frame(buffer: &mut BytesMut) -> Option<GbxFrame> {
+            fn parse_frame(buffer: &mut BytesMut) -> Option<GbxPacket> {
                 let mut buf = Cursor::new(&buffer[..]);
 
-                if let Ok(frame) = GbxFrame::parse(&mut buf) {
-                    // Discard the frame from the buffer
-                    //self.buffer.advance(len);
+                //TODO make a msg or anything out of this.
+                if let Ok(packet) = GbxPacket::parse(&mut buf) {
+                    /* if packet.is_method_response() {
+                    } else {
+                        if packet.get_event() == ""
+                    } */
 
                     // Return the frame to the caller.
-                    Some(frame)
+                    Some(packet)
                 } else {
                     None
                 }
@@ -406,7 +471,7 @@ impl ServerClient {
             sender,
 
             handler: 0x80000000,
-            buffer: BytesMut::with_capacity(1024),
+            //buffer: BytesMut::with_capacity(1024),
         }
     }
 
@@ -420,6 +485,10 @@ impl ServerClient {
 
         // extract return value
         Ok(R::try_from_value(&result)?)
+    }
+
+    pub fn subscribe(&mut self, method: &str, then: impl Fn(MethodResponse)) {
+        //self.subscriptions
     }
 
     async fn call_inner(
@@ -496,7 +565,7 @@ impl ServerClient {
         Ok(result.inner())
     }
 
-    pub async fn read_frame(&mut self) -> tokio::io::Result<Option<GbxFrame>> {
+    /*  pub async fn read_frame(&mut self) -> tokio::io::Result<Option<GbxFrame>> {
         loop {
             // Attempt to parse a frame from the buffered data. If
             // enough data has been buffered, the frame is
@@ -534,42 +603,42 @@ impl ServerClient {
                 }
             } */
         }
-    }
+    } */
 
-    fn parse_frame(&mut self) -> tokio::io::Result<Option<GbxFrame>> {
-        // Create the `T: Buf` type.
-        let mut buf = Cursor::new(&self.buffer[..]);
+    /* fn parse_frame(&mut self) -> tokio::io::Result<Option<GbxFrame>> {
+           // Create the `T: Buf` type.
+           let mut buf = Cursor::new(&self.buffer[..]);
 
-        println!("{:?}", self.buffer);
+           println!("{:?}", self.buffer);
 
-        // Check whether a full frame is available
-        //match GbxFrame::check(&mut buf) {
-        // Ok(_) => {
-        // Get the byte length of the frame
-        // let len = buf.position() as usize;
+           // Check whether a full frame is available
+           //match GbxFrame::check(&mut buf) {
+           // Ok(_) => {
+           // Get the byte length of the frame
+           // let len = buf.position() as usize;
 
-        // Reset the internal cursor for the
-        // call to `parse`.
-        //buf.set_position(0);
+           // Reset the internal cursor for the
+           // call to `parse`.
+           //buf.set_position(0);
 
-        // Parse the frame
-        if let Ok(frame) = GbxFrame::parse(&mut buf) {
-            // Discard the frame from the buffer
-            //self.buffer.advance(len);
+           // Parse the frame
+           if let Ok(frame) = GbxFrame::parse(&mut buf) {
+               // Discard the frame from the buffer
+               //self.buffer.advance(len);
 
-            // Return the frame to the caller.
-            Ok(Some(frame))
-        } else {
-            Ok(None)
-        }
-        //}
-        // Not enough data has been buffered
-        //Err(Incomplete) => Ok(None),
-        // An error was encountered
-        // Err(e) => Err(e.into()),
-        // }
-    }
-
+               // Return the frame to the caller.
+               Ok(Some(frame))
+           } else {
+               Ok(None)
+           }
+           //}
+           // Not enough data has been buffered
+           //Err(Incomplete) => Ok(None),
+           // An error was encountered
+           // Err(e) => Err(e.into()),
+           // }
+       }
+    */
     // Write a frame to the connection.
     /* pub async fn write_frame(&mut self, frame: &GbxFrame) -> io::Result<()> {
         match frame {
