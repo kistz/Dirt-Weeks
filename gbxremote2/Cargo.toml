@@ -5,3 +5,14 @@ authors = ["kistz (Kilian Strunz)"]
 edition = "2024"
 
 [dependencies]
+tokio = { version = "*", features = ["full"] }
+bytes = "1"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "*"
+dxr = { version = "0", features = [] }
+
+
+dashmap = "*"
+
+thiserror = "*"

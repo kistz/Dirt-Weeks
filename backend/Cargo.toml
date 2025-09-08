@@ -5,16 +5,20 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "*", features = ["full"] }
-bytes = "1"
+#bytes = "1"
 
 serde = { version = "1", features = ["derive"] }
-dxr = { version = "0", features = [] }
+serde_json = "*"
+
+gbxremote2 = { path = "../gbxremote2" }
+#dxr = { version = "0", features = [] }
 
 
+#dashmap = "*"
 #reqwest = "0"
 #http-body-util = "0.1"
 #hyper-util = { version = "0.1", features = ["full"] }
 #hyper = { version = "1", features = ["full"] }
-tokio-util = "*"
-futures-util = "*"
-thiserror = "*"
+#tokio-util = "*"
+#futures-util = "*"
+#thiserror = "*"
