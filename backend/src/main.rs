@@ -55,16 +55,23 @@ struct GbxPacket {
 
 impl GbxPacket {
     fn parse(buf: &mut Cursor<&[u8]>) -> Result<GbxPacket, ClientError> {
+        //println!("current parse attempt {buf:?}");
+
         if buf.remaining() < 8 {
             return Err(ClientError::Incomplete);
         }
-        let size = buf.get_u32_le();
+        let size = buf.get_u32_le() as usize;
         let handler = buf.get_u32_le();
-        if buf.remaining() < size as usize {
+        if buf.remaining() < size {
             return Err(ClientError::Incomplete);
         }
 
-        let body = String::from_utf8_lossy(&buf.chunk()[..(size as usize)]).into_owned();
+        let body = String::from_utf8_lossy(&buf.chunk()[..size]).into_owned();
+
+        // Advance the buffer to body size. (Header Methods calls of u32 do this automatically)
+        buf.advance(size);
+
+        let size = size as u32;
 
         // Method calls and Callbacks operate above and below half a u32 respectively.
         /* if handler > 0x80000000u32 {
@@ -215,15 +222,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("{handler:?}"); */
     //let result: Result<String, ClientError> = server.call("system.listMethods", ()).await;
 
-    let mut server = ServerClient::new("127.0.0.1:5000").await;
+    let mut server = ServerClient::new("127.0.0.1:5001").await;
 
-    let result: Result<bool, ClientError> = server.call("SetApiVersion", "2023-03-24").await;
+    let _: Result<bool, ClientError> = server.call("SetApiVersion", "2023-03-24").await;
 
-    let working: Result<bool, ClientError> = server
+    let _: Result<bool, ClientError> = server
         .call("Authenticate", ("SuperAdmin", "SuperAdmin"))
         .await;
 
-    let result: Result<bool, ClientError> = server.call("EnableCallbacks", true).await;
+    let _: Result<bool, ClientError> = server.call("EnableCallbacks", true).await;
+
+    //let _: Result<bool, ClientError> = server.call("GetModeScriptInfo", ()).await;
+
+    let _: Result<bool, ClientError> = server
+        .call(
+            "TriggerModeScriptEventArray",
+            ("XmlRpc.EnableCallbacks", ["true"]),
+        )
+        .await;
 
     let _: Result<bool, ClientError> = server
         .call("ChatSendServerMessage", "Hey from Rust owo")
@@ -338,9 +354,8 @@ struct ServerClient {
     //reader: ReadHalf<BufWriter<TcpStream>>,
     //writer: WriteHalf<BufWriter<TcpStream>>,
     sender: Sender<GbxMessage>,
-
     //buffer: BytesMut,
-    handler: u32,
+    //handler: u32,
 }
 
 impl ServerClient {
@@ -363,15 +378,23 @@ impl ServerClient {
 
         println!("Size: {size}, Content: {call}");
         /* let handler = Handler {
-            size,
-            // handler,
-            call,
+        size,
+        // handler,
+        call,
         }; */
 
         let (sender, mut rx) = mpsc::channel::<GbxMessage>(32);
 
+        let client = Self {
+            //reader,
+            // writer,
+            sender,
+            //handler: 0x80000000,
+            //buffer: BytesMut::with_capacity(1024),
+        };
+
         let _write_manager = tokio::spawn(async move {
-            // Establish a connection to the server
+            let mut handler = 0x80000000u32;
 
             // Start receiving messages
             while let Some(cmd) = rx.recv().await {
@@ -388,6 +411,9 @@ impl ServerClient {
                         })
                         .await; */
 
+                        // Increment the handler before each method call
+                        handler += 1;
+
                         /* match frame {
                         GbxFrame::MethodCall {
                             size,
@@ -395,7 +421,7 @@ impl ServerClient {
                             body,
                         } => { */
                         writer.write_u32_le(message.len() as u32).await.unwrap();
-                        writer.write_u32_le(0x80000001u32).await.unwrap();
+                        writer.write_u32_le(handler).await.unwrap();
                         writer.write_all(message.as_bytes()).await.unwrap();
 
                         //println!("writer bytes: {:?}", self.writer.buffer())
@@ -406,6 +432,7 @@ impl ServerClient {
 
                         let flushed = writer.flush().await;
 
+                        //TODO handle the response
                         let response = MethodResponse::new(Value::boolean(false));
                         let _ = responder.send(response);
                     }
@@ -428,10 +455,13 @@ impl ServerClient {
             let mut buffer: BytesMut = BytesMut::with_capacity(1024);
 
             fn parse_frame(buffer: &mut BytesMut) -> Option<GbxPacket> {
+                //println!("parsing");
                 let mut buf = Cursor::new(&buffer[..]);
 
                 //TODO make a msg or anything out of this.
                 if let Ok(packet) = GbxPacket::parse(&mut buf) {
+                    buffer.advance(buf.position() as usize);
+                    //println!("has parsed");
                     /* if packet.is_method_response() {
                     } else {
                         if packet.get_event() == ""
@@ -445,8 +475,8 @@ impl ServerClient {
             }
 
             loop {
-                if let Some(frame) = parse_frame(&mut buffer) {
-                    println!("{frame:?}");
+                while let Some(frame) = parse_frame(&mut buffer) {
+                    println!("Frame: {frame:?}");
                 }
                 println!("Buffy: {buffer:?}");
 
@@ -464,15 +494,7 @@ impl ServerClient {
                 }
             }
         });
-
-        Self {
-            //reader,
-            // writer,
-            sender,
-
-            handler: 0x80000000,
-            //buffer: BytesMut::with_capacity(1024),
-        }
+        client
     }
 
     pub async fn call<P: TryToParams, R: TryFromValue>(
@@ -487,7 +509,7 @@ impl ServerClient {
         Ok(R::try_from_value(&result)?)
     }
 
-    pub fn subscribe(&mut self, method: &str, then: impl Fn(MethodResponse)) {
+    pub fn subscribe(&mut self, event: &str, then: impl Fn(MethodResponse)) {
         //self.subscriptions
     }
 
@@ -502,7 +524,7 @@ impl ServerClient {
         let xml = dxr::serialize_xml(&request)
             .map_err(|error| DxrError::invalid_data(error.to_string()))?;
         let body = [r#"<?xml version="1.0"?>"#, xml.as_str()].join("");
-        println!("{body}");
+        //println!("{body}");
 
         /*  // construct request and send to server
         let head_size = self.stream.write(&(body.len() as u32).to_le_bytes()).await;
@@ -519,7 +541,7 @@ impl ServerClient {
 
         let mut buf = vec![0; 1024]; */
 
-        self.handler += 1;
+        //self.handler += 1;
 
         /* let written = self
             .write_frame(&GbxFrame::MethodCall {
@@ -544,7 +566,7 @@ impl ServerClient {
                 .unwrap();
 
             let res = resp_rx.await;
-            println!("GOT = {:?}", res);
+            //println!("GOT = {:?}", res);
             res
         })
         .await;
@@ -560,7 +582,7 @@ impl ServerClient {
         //let result = response_to_result(read.unwrap().unwrap().xml())?;
         let result = MethodResponse::new(Value::boolean(false));
 
-        println!("{result:?}");
+        //println!("{result:?}");
 
         Ok(result.inner())
     }
