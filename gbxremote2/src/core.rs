@@ -12,7 +12,7 @@ use thiserror::Error;
 use tokio::io::{self, AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 #[derive(Debug)]
 struct GbxPacket {
@@ -185,6 +185,14 @@ impl ServerClient {
 
     pub fn subscribe(&mut self, event: impl Into<String>, then: fn(&str)) {
         self.registered_callbacks.insert(event.into(), vec![then]);
+
+        /* let (sender, receiver) = broadcast::channel(8);
+        sender.clone();
+
+        tokio::spawn(async {
+            // Do some async work
+            "return value"
+        }); */
     }
 
     pub async fn call<P: TryToParams, R: TryFromValue>(
