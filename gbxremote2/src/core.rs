@@ -58,7 +58,7 @@ enum GbxMethodCall {
 pub struct ServerClient {
     sender: Sender<GbxMethodCall>,
     response_mapping: Arc<DashMap<u32, oneshot::Sender<MethodResponse>>>,
-    registered_callbacks: Arc<DashMap<String, Vec<fn(&str)>>>,
+    registered_callbacks: Arc<DashMap<String, Vec<Box<dyn Fn(&str) + Send + Sync>>>>,
 }
 
 impl ServerClient {
@@ -183,8 +183,9 @@ impl ServerClient {
         client
     }
 
-    pub fn subscribe(&mut self, event: impl Into<String>, then: fn(&str)) {
-        self.registered_callbacks.insert(event.into(), vec![then]);
+    pub fn subscribe(&self, event: impl Into<String>, then: impl Fn(&str) + Send + Sync + 'static) {
+        self.registered_callbacks
+            .insert(event.into(), vec![Box::new(then)]);
 
         /* let (sender, receiver) = broadcast::channel(8);
         sender.clone();

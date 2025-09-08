@@ -130,6 +130,15 @@ async fn websocket(stream: WebSocket, state: Arc<AppState>) {
     let msg = format!("{username} joined.");
     tracing::debug!("{msg}");
     let _ = state.tx.send(msg);
+    let test = state.tx.clone();
+    //let _ = tokio::spawn(async move {
+    state
+        .clone()
+        .trackmania_server
+        .subscribe("Trackmania.Event.WayPoint", move |d| {
+            test.send(d.to_owned());
+        });
+    //});
 
     // Spawn the first task that will receive broadcast messages and send text
     // messages over the websocket to our client.
