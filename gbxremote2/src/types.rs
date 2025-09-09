@@ -31,6 +31,17 @@ pub struct WayPointEvent {
     #[serde(rename = "blockid")]
     block_id: String,
 }
+
+pub trait ModeScriptCallbacks {
+    fn on_way_point(&self, execute: impl Fn(WayPointEvent) + Send + Sync + 'static);
+}
+
+impl ModeScriptCallbacks for ServerClient {
+    fn on_way_point(&self, execute: impl Fn(WayPointEvent) + Send + Sync + 'static) {
+        self.on("Trackmania.Event.WayPoint", execute);
+    }
+}
+
 #[allow(async_fn_in_trait)]
 pub trait ModeScriptMethodsXmlRpc {
     async fn enable_callbacks(&self, enable: bool) -> Result<bool, ClientError>;

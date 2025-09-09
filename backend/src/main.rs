@@ -15,7 +15,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use gbxremote2::{
     ClientError, ServerClient,
-    types::{WayPointEvent, XmlRpcMethods},
+    types::{ModeScriptCallbacks, XmlRpcMethods},
 };
 
 use tokio::sync::broadcast;
@@ -62,9 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .call("ChatSendServerMessage", "Hey from Rust owo")
         .await;
 
-    server.on("Trackmania.Event.WayPoint", |way_point: WayPointEvent| {
-        println!("This is nice: {way_point:#?}");
-    });
+    server.on_way_point(|info| println!("{info:?}"));
 
     let (tx, _rx) = broadcast::channel(100);
 
@@ -145,12 +143,6 @@ async fn websocket(stream: WebSocket, state: Arc<AppState>) {
             _ = way_point.send(received.to_string());
         }
     });
-
-    /* state
-    .trackmania_server
-    .subscribe("Trackmania.Event.WayPoint", move |d| {
-        let _ = way_point.send(d.to_owned());
-    }); */
 
     // Spawn the first task that will receive broadcast messages and send text
     // messages over the websocket to our client.
