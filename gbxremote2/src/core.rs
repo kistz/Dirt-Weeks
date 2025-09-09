@@ -8,6 +8,7 @@ use dxr::{
     DxrError, Fault, FaultResponse, MethodCall, MethodResponse, TryFromValue, TryToParams, Value,
 };
 
+use serde::de::DeserializeOwned;
 use thiserror::Error;
 use tokio::io::{self, AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::net::TcpStream;
@@ -50,15 +51,57 @@ enum GbxMethodCall {
         message: String,
         responder: oneshot::Sender<MethodResponse>,
     },
-    Callback {
+    /* Callback {
         message: String,
-    },
+    }, */
+}
+
+/// Associates all events to a channel.
+#[derive(Clone)]
+struct RegisiteredCallbacks(
+    #[allow(clippy::type_complexity)]
+    Arc<
+        DashMap<
+            String,
+            (
+                broadcast::Receiver<Arc<String>>,
+                broadcast::Sender<Arc<String>>,
+            ),
+        >,
+    >,
+);
+//Arc<DashMap<String, Vec<Box<dyn Fn(&str) + Send + Sync>>>>
+
+impl RegisiteredCallbacks {
+    fn new() -> Self {
+        RegisiteredCallbacks(Arc::new(DashMap::new()))
+    }
+
+    fn get(&self, key: &str) -> broadcast::Receiver<Arc<String>> {
+        if let Some(entry) = self.0.get(key) {
+            entry.1.subscribe()
+        } else {
+            let new_channel = broadcast::channel::<Arc<String>>(8);
+            let ret = new_channel.0.subscribe();
+
+            self.0
+                .insert(key.to_owned(), (new_channel.1, new_channel.0));
+
+            ret
+        }
+    }
+
+    fn send(&self, key: &str, message: String) {
+        if let Some(entry) = self.0.get(key) {
+            _ = entry.1.send(Arc::new(message));
+        }
+    }
 }
 
 pub struct ServerClient {
     sender: Sender<GbxMethodCall>,
     response_mapping: Arc<DashMap<u32, oneshot::Sender<MethodResponse>>>,
-    registered_callbacks: Arc<DashMap<String, Vec<Box<dyn Fn(&str) + Send + Sync>>>>,
+    registered_callbacks: RegisiteredCallbacks,
 }
 
 impl ServerClient {
@@ -85,7 +128,7 @@ impl ServerClient {
             sender,
             response_mapping: Arc::new(DashMap::new()),
 
-            registered_callbacks: Arc::new(DashMap::new()),
+            registered_callbacks: RegisiteredCallbacks::new(),
             //handler: 0x80000000,
             //buffer: BytesMut::with_capacity(1024),
         };
@@ -111,8 +154,7 @@ impl ServerClient {
                         let _ = writer.flush().await;
 
                         writer_response.insert(handler, responder);
-                    }
-                    GbxMethodCall::Callback { message } => todo!(),
+                    } //GbxMethodCall::Callback { .. } => todo!(),
                 }
             }
         });
@@ -144,7 +186,7 @@ impl ServerClient {
 
                     if packet.is_method_response() {
                         let (_, response) = reader_response.remove(&packet.handler).unwrap();
-                        response.send(body_to_response(&packet.body).unwrap());
+                        _ = response.send(body_to_response(&packet.body).unwrap());
                     } else {
                         let callback = dxr::deserialize_xml::<MethodCall>(&packet.body).unwrap();
                         println!("Callback: {callback:?}");
@@ -156,12 +198,7 @@ impl ServerClient {
 
                             println!("Name: {callback_method_name}, JSON: {json_response:?}");
 
-                            if let Some(callbacks) = registered_callbacks.get(&callback_method_name)
-                            {
-                                for callback in callbacks.iter() {
-                                    callback(&json_response);
-                                }
-                            }
+                            registered_callbacks.send(&callback_method_name, json_response)
                         }
                     }
                 }
@@ -183,21 +220,37 @@ impl ServerClient {
         client
     }
 
-    pub fn subscribe(&self, event: impl Into<String>, then: impl Fn(&str) + Send + Sync + 'static) {
-        self.registered_callbacks
-            .insert(event.into(), vec![Box::new(then)]);
+    // Returns a handle that reveives every message of the selected
+    pub fn subscribe<'a>(
+        &self,
+        event: impl Into<&'a str>,
+        //then: impl Fn(&str) + Send + Sync + 'static,
+        //then: impl FnOnce(T) + Send + Sync + 'static,
+    ) -> broadcast::Receiver<Arc<String>> {
+        self.registered_callbacks.get(event.into())
+    }
 
-        /* let (sender, receiver) = broadcast::channel(8);
-        sender.clone();
+    // Executes the specified function whenever event is triggered.
+    pub fn on<'a, T: DeserializeOwned>(
+        &self,
+        event: impl Into<&'a str>,
+        //then: impl Fn(&str) + Send + Sync + 'static,
+        execute: impl Fn(T) + Send + Sync + 'static,
+    ) {
+        let mut receiver = self.registered_callbacks.get(event.into());
 
-        tokio::spawn(async {
+        tokio::spawn(async move {
             // Do some async work
-            "return value"
-        }); */
+            loop {
+                let received = receiver.recv().await.unwrap();
+                let de = { serde_json::from_str::<T>(&received).unwrap() };
+                execute(de);
+            }
+        });
     }
 
     pub async fn call<P: TryToParams, R: TryFromValue>(
-        &mut self,
+        &self,
         method: &str,
         args: P,
     ) -> Result<R, ClientError> {
@@ -209,7 +262,7 @@ impl ServerClient {
     }
 
     async fn call_inner(
-        &mut self,
+        &self,
         method: Cow<'_, str>,
         params: Vec<Value>,
     ) -> Result<Value, ClientError> {
@@ -232,9 +285,7 @@ impl ServerClient {
                 .await
                 .unwrap();
 
-            let res = resp_rx.await.unwrap();
-            //println!("GOT = {:?}", res);
-            res
+            resp_rx.await.unwrap()
         })
         .await
         .unwrap();

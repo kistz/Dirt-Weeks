@@ -13,9 +13,12 @@ use axum::{
     routing::get,
 };
 use futures_util::{SinkExt, StreamExt};
-use gbxremote2::{ClientError, ServerClient, types::WayPointEvent};
+use gbxremote2::{
+    ClientError, ServerClient,
+    types::{WayPointEvent, XmlRpcMethods},
+};
 
-use tokio::{signal, sync::broadcast};
+use tokio::sync::broadcast;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 struct AppState {
@@ -35,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .init();
 
     //Initialize the Trackmania server
-    let mut server = ServerClient::new("127.0.0.1:5001").await;
+    let server = ServerClient::new("127.0.0.1:5001").await;
 
     let _: Result<bool, ClientError> = server.call("SetApiVersion", "2023-03-24").await;
 
@@ -52,14 +55,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )
         .await;
 
+    println!("{:?}", server.auto_save_replays(true).await);
+    println!("{:?}", server.is_auto_save_replays_enabled().await);
+
     let _: Result<bool, ClientError> = server
         .call("ChatSendServerMessage", "Hey from Rust owo")
         .await;
 
-    server.subscribe("Trackmania.Event.WayPoint", |json| {
-        let nicely_typed = serde_json::from_str::<WayPointEvent>(json).unwrap();
-
-        println!("This is nice: {nicely_typed:#?}");
+    server.on("Trackmania.Event.WayPoint", |way_point: WayPointEvent| {
+        println!("This is nice: {way_point:#?}");
     });
 
     let (tx, _rx) = broadcast::channel(100);
@@ -72,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let app = Router::new()
         .route("/", get(index))
-        .route("/websocket", get(websocket_handler))
+        .route("/subscribe/waypoint", get(websocket_handler))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
@@ -130,15 +134,23 @@ async fn websocket(stream: WebSocket, state: Arc<AppState>) {
     let msg = format!("{username} joined.");
     tracing::debug!("{msg}");
     let _ = state.tx.send(msg);
-    let test = state.tx.clone();
-    //let _ = tokio::spawn(async move {
-    state
-        .clone()
+
+    let way_point = state.tx.clone();
+    let mut subscription = state
         .trackmania_server
-        .subscribe("Trackmania.Event.WayPoint", move |d| {
-            test.send(d.to_owned());
-        });
-    //});
+        .subscribe("Trackmania.Event.WayPoint");
+    tokio::spawn(async move {
+        loop {
+            let received = subscription.recv().await.unwrap();
+            _ = way_point.send(received.to_string());
+        }
+    });
+
+    /* state
+    .trackmania_server
+    .subscribe("Trackmania.Event.WayPoint", move |d| {
+        let _ = way_point.send(d.to_owned());
+    }); */
 
     // Spawn the first task that will receive broadcast messages and send text
     // messages over the websocket to our client.
