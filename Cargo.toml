@@ -1,0 +1,3 @@
+[workspace]
+resolver = "3"
+members = ["tm-server-client", "tm-tourney-manager"]

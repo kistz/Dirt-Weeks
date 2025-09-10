@@ -98,13 +98,13 @@ impl RegisiteredCallbacks {
     }
 }
 
-pub struct ServerClient {
+pub struct TrackmaniaServer {
     sender: Sender<GbxMethodCall>,
     response_mapping: Arc<DashMap<u32, oneshot::Sender<MethodResponse>>>,
     registered_callbacks: RegisiteredCallbacks,
 }
 
-impl ServerClient {
+impl TrackmaniaServer {
     pub async fn new(url: impl Into<String>) -> Self {
         let stream = BufWriter::new(TcpStream::connect(url.into()).await.unwrap());
 
@@ -221,12 +221,7 @@ impl ServerClient {
     }
 
     // Returns a handle that reveives every message of the selected
-    pub fn subscribe<'a>(
-        &self,
-        event: impl Into<&'a str>,
-        //then: impl Fn(&str) + Send + Sync + 'static,
-        //then: impl FnOnce(T) + Send + Sync + 'static,
-    ) -> broadcast::Receiver<Arc<String>> {
+    pub fn subscribe<'a>(&self, event: impl Into<&'a str>) -> broadcast::Receiver<Arc<String>> {
         self.registered_callbacks.get(event.into())
     }
 
@@ -234,15 +229,12 @@ impl ServerClient {
     pub fn on<'a, T: DeserializeOwned>(
         &self,
         event: impl Into<&'a str>,
-        //then: impl Fn(&str) + Send + Sync + 'static,
         execute: impl Fn(T) + Send + Sync + 'static,
     ) {
         let mut receiver = self.registered_callbacks.get(event.into());
 
         tokio::spawn(async move {
-            // Do some async work
-            loop {
-                let received = receiver.recv().await.unwrap();
+            while let Ok(received) = receiver.recv().await {
                 let de = { serde_json::from_str::<T>(&received).unwrap() };
                 execute(de);
             }

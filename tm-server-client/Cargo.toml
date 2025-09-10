@@ -1,5 +1,5 @@
 [package]
-name = "gbxremote2"
+name = "tm-server-client"
 version = "0.0.0"
 authors = ["kistz (Kilian Strunz)"]
 edition = "2024"

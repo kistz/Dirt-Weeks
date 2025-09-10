@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ClientError, ServerClient};
+use crate::{ClientError, TrackmaniaServer};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WayPointEvent {
@@ -32,13 +32,81 @@ pub struct WayPointEvent {
     block_id: String,
 }
 
-pub trait ModeScriptCallbacks {
-    fn on_way_point(&self, execute: impl Fn(WayPointEvent) + Send + Sync + 'static);
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ScoresEvent {
+    #[serde(rename = "responseid")]
+    response_id: String,
+    section: String,
+    #[serde(rename = "useteams")]
+    use_teams: bool,
+
+    #[serde(rename = "winnerteam")]
+    winner_team: i32,
+    #[serde(rename = "winnerplayer")]
+    winner_player: String,
+
+    teams: Vec<Team>,
+    players: Vec<Player>,
 }
 
-impl ModeScriptCallbacks for ServerClient {
+#[derive(Debug, Serialize, Deserialize)]
+struct Player {
+    login: String,
+    #[serde(rename = "accountid")]
+    account_id: String,
+
+    name: String,
+
+    team: i32,
+
+    rank: u32,
+
+    #[serde(rename = "roundpoints")]
+    round_points: u32,
+    #[serde(rename = "mappoints")]
+    map_points: u32,
+    #[serde(rename = "matchpoints")]
+    match_points: u32,
+
+    #[serde(rename = "bestracetime")]
+    best_racetime: u32,
+
+    #[serde(rename = "bestracecheckpoints")]
+    best_race_checkpoints: Vec<u32>,
+    #[serde(rename = "bestlaptime")]
+    best_laptime: u32,
+    #[serde(rename = "bestlapcheckpoints")]
+    best_lap_checkpoints: Vec<u32>,
+    #[serde(rename = "prevracetime")]
+    previous_racetime: u32,
+    #[serde(rename = "prevracecheckpoints")]
+    previous_race_checkpoints: Vec<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Team {
+    id: u32,
+    name: String,
+    #[serde(rename = "roundpoints")]
+    round_points: u32,
+    #[serde(rename = "mappoints")]
+    map_points: u32,
+    #[serde(rename = "matchpoints")]
+    match_points: u32,
+}
+
+pub trait ModeScriptCallbacks {
+    fn on_way_point(&self, execute: impl Fn(WayPointEvent) + Send + Sync + 'static);
+    fn on_scores(&self, execute: impl Fn(ScoresEvent) + Send + Sync + 'static);
+}
+
+impl ModeScriptCallbacks for TrackmaniaServer {
     fn on_way_point(&self, execute: impl Fn(WayPointEvent) + Send + Sync + 'static) {
         self.on("Trackmania.Event.WayPoint", execute);
+    }
+
+    fn on_scores(&self, execute: impl Fn(ScoresEvent) + Send + Sync + 'static) {
+        self.on("Trackmania.Scores", execute);
     }
 }
 
@@ -59,7 +127,7 @@ pub trait ModeScriptMethodsXmlRpc {
     async fn get_all_api_versions(&self, enable: bool) -> Result<bool, ClientError>;
 }
 
-impl ModeScriptMethodsXmlRpc for ServerClient {
+impl ModeScriptMethodsXmlRpc for TrackmaniaServer {
     ///Enable or disable mode script callbacks.
     async fn enable_callbacks(&self, enable: bool) -> Result<bool, ClientError> {
         self.call(
@@ -129,7 +197,7 @@ pub trait XmlRpcMethods {
     async fn is_auto_save_replays_enabled(&self) -> Result<bool, ClientError>;
 }
 
-impl XmlRpcMethods for ServerClient {
+impl XmlRpcMethods for TrackmaniaServer {
     async fn kick(&self, player: String, message: Option<String>) -> Result<bool, ClientError> {
         todo!()
     }

@@ -12,9 +12,10 @@ use axum::{
     response::{Html, IntoResponse},
     routing::get,
 };
+use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
-use gbxremote2::{
-    ClientError, ServerClient,
+use tm_server_client::{
+    ClientError, TrackmaniaServer,
     types::{ModeScriptCallbacks, XmlRpcMethods},
 };
 
@@ -23,8 +24,33 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 struct AppState {
     tx: broadcast::Sender<String>,
-    trackmania_server: ServerClient,
+    trackmania_server: TrackmaniaServer,
     user_set: Mutex<HashSet<String>>,
+}
+
+struct ServerPool {
+    servers: Vec<TrackmaniaServer>,
+}
+
+struct Event {
+    stages: Vec<Stage>,
+    next_stage: usize,
+    servers: ServerPool,
+}
+
+struct Stage {
+    starting: Utc,
+    status: String,
+    participants: Vec<String>,
+    matches: Vec<Match>,
+}
+
+struct Match {
+    server_handle: String,
+}
+
+struct Tournament {
+    events: Vec<Event>,
 }
 
 #[tokio::main]
@@ -38,9 +64,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .init();
 
     //Initialize the Trackmania server
-    let server = ServerClient::new("127.0.0.1:5001").await;
+    let server = TrackmaniaServer::new("127.0.0.1:5001").await;
 
-    let _: Result<bool, ClientError> = server.call("SetApiVersion", "2023-03-24").await;
+    //let _: Result<bool, ClientError> = server.call("SetApiVersion", "2023-03-24").await;
+
+    let _: Result<bool, ClientError> = server.call("SetApiVersion", "2025-07-04").await;
 
     let _: Result<bool, ClientError> = server
         .call("Authenticate", ("SuperAdmin", "SuperAdmin"))
@@ -51,7 +79,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let _: Result<bool, ClientError> = server
         .call(
             "TriggerModeScriptEventArray",
+            ("XmlRpc.SetApiVersion", ["3.11"]),
+        )
+        .await;
+
+    let _: Result<bool, ClientError> = server
+        .call(
+            "TriggerModeScriptEventArray",
             ("XmlRpc.EnableCallbacks", ["true"]),
+        )
+        .await;
+
+    let _: Result<bool, ClientError> = server
+        .call(
+            "TriggerModeScriptEventArray",
+            ("XmlRpc.GetMethodsList", ["mhm"]),
         )
         .await;
 
@@ -75,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
         .route("/", get(index))
         .route("/subscribe/waypoint", get(websocket_handler))
+        .route("/admin/{jaaa}", get(index))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
@@ -137,11 +180,18 @@ async fn websocket(stream: WebSocket, state: Arc<AppState>) {
     let mut subscription = state
         .trackmania_server
         .subscribe("Trackmania.Event.WayPoint");
+
     tokio::spawn(async move {
         loop {
             let received = subscription.recv().await.unwrap();
             _ = way_point.send(received.to_string());
         }
+    });
+
+    let scores_channel = state.tx.clone();
+
+    state.trackmania_server.on_scores(move |scores| {
+        _ = scores_channel.send(serde_json::to_string(&scores).unwrap());
     });
 
     // Spawn the first task that will receive broadcast messages and send text
