@@ -44,6 +44,8 @@ services:
       - '--web.console.templates=/usr/share/prometheus/consoles'
     ports:
       - 9090:9090
+    extra_hosts: 
+      - "host.docker.internal:host-gateway"
 #    links:
 #      - cadvisor:cadvisor
 #      - alertmanager:alertmanager
@@ -51,31 +53,22 @@ services:
 #    depends_on:
 #      - cadvisor
 #      - pushgateway
-    networks:
-      - back-tier
     restart: always
   grafana:
-    image: grafana/grafana
-    user: "472"
+    image: grafana/grafana-oss
+    #user: "472"
     depends_on:
       - prometheus
     ports:
       - 6000:3000
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning/:/etc/grafana/provisioning/
-    env_file:
-      - ./grafana/config.monitoring
-    networks:
-      - back-tier
-      - front-tier
+    #volumes:
+    #  - grafana_data:/var/lib/grafana
+    #  - ./grafana/provisioning/:/etc/grafana/provisioning/
+    #env_file:
+    #  - ./grafana/config.monitoring
     restart: always
 volumes:
   UserData: null
   PostgresData: null
   prometheus_data: {}
   grafana_data: {}
-
-networks:
-  front-tier:
-  back-tier:
