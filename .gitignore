@@ -1,3 +1,2 @@
-/frontend/target
-/server test/UserData
+/docker_compose/UserData
 /target
