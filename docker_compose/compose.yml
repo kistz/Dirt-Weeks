@@ -11,41 +11,41 @@ services:
       TM_SYSTEM_XMLRPC_ALLOWREMOTE: "True"
     volumes:
       - ./UserData:/server/UserData
-  db:
-    image: postgres
-    restart: always
-    ports:
-      - '5432:5432/tcp'
-    volumes:
-      - PostgresData:/var/lib/postgresql/data 
-    environment:
-      POSTGRES_PASSWORD: tourney
-      POSTGRES_USER: tourney
-      POSTGRES_DB: tourney
-  pgadmin:
-    image: dpage/pgadmin4
-    restart: always
-    extra_hosts: 
-        - "host.docker.internal:host-gateway"
-    environment:
-      PGADMIN_DEFAULT_EMAIL: PLEASE@CHANGE.ME
-      PGADMIN_DEFAULT_PASSWORD: CHANGEME
-    ports:
-      - "8081:80"
-  prometheus:
-    image: prom/prometheus:v2.36.2
-    volumes:
-      - ./prometheus/:/etc/prometheus/
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
-      - '--web.console.templates=/usr/share/prometheus/consoles'
-    ports:
-      - 9090:9090
-    extra_hosts: 
-      - "host.docker.internal:host-gateway"
+#  db:
+#    image: postgres
+#    restart: always
+#    ports:
+#      - '5432:5432/tcp'
+#    volumes:
+#      - PostgresData:/var/lib/postgresql/data 
+#    environment:
+#      POSTGRES_PASSWORD: tourney
+#      POSTGRES_USER: tourney
+#      POSTGRES_DB: tourney
+#  pgadmin:
+#    image: dpage/pgadmin4
+#    restart: always
+#    extra_hosts: 
+#        - "host.docker.internal:host-gateway"
+#    environment:
+#      PGADMIN_DEFAULT_EMAIL: PLEASE@CHANGE.ME
+#      PGADMIN_DEFAULT_PASSWORD: CHANGEME
+#    ports:
+#      - "8081:80"
+#  prometheus:
+#    image: prom/prometheus:v2.36.2
+#    volumes:
+#      - ./prometheus/:/etc/prometheus/
+#      - prometheus_data:/prometheus
+#    command:
+#      - '--config.file=/etc/prometheus/prometheus.yml'
+#      - '--storage.tsdb.path=/prometheus'
+#      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+#      - '--web.console.templates=/usr/share/prometheus/consoles'
+#    ports:
+#      - 9090:9090
+#    extra_hosts: 
+#      - "host.docker.internal:host-gateway"
 #    links:
 #      - cadvisor:cadvisor
 #      - alertmanager:alertmanager
@@ -53,25 +53,33 @@ services:
 #    depends_on:
 #      - cadvisor
 #      - pushgateway
-    restart: always
-  grafana:
-    image: grafana/grafana-oss
+#    restart: always
+#  grafana:
+#    image: grafana/grafana-oss
     #user: "472"
-    depends_on:
+#    depends_on:
       - prometheus
-    ports:
-      - 6000:3000
+#    ports:
+#      - 6000:3000
     #volumes:
     #  - grafana_data:/var/lib/grafana
     #  - ./grafana/provisioning/:/etc/grafana/provisioning/
     #env_file:
     #  - ./grafana/config.monitoring
-    restart: always
+ #   restart: always
   spacetime:
     image: clockworklabs/spacetime
     ports: 
       - '1234:3000'
     command: 'start'
+  keycloak:
+    image: quay.io/keycloak/keycloak
+    ports:
+      - '5678:8080'
+    command: start-dev
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: "admin"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "admin" 
   #volumes:
   #  - 
 volumes:
